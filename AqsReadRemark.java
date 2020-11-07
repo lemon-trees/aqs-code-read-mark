@@ -37,14 +37,15 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
         /** waitStatus value to indicate thread has cancelled 已取消 */
         static final int CANCELLED = 1;
         
-        /** waitStatus value to indicate successor's thread needs unparking 唤醒后驱节点 */
+        /** waitStatus value to indicate successor's thread needs unparking 后驱节点的线程需要唤醒 */
         static final int SIGNAL = -1;
         
         /** waitStatus value to indicate thread is waiting on condition 因为某个条件被挂起 */
         static final int CONDITION = -2;
         
         /**
-         * waitStatus value to indicate the next acquireShared should unconditionally propagate
+         * waitStatus value to indicate(表示) the next acquireShared should unconditionally propagate
+         * 传播状态，表示当前场景下后续的acquireShared能够得以执行。
          */
         static final int PROPAGATE = -3;
         
@@ -264,6 +265,7 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
     /**
      * Release action for shared mode -- signals successor and ensures propagation. (Note: For exclusive
      * mode, release just amounts to calling unparkSuccessor of head if it needs signal.)
+     * 共享模式下释放行为：通知继任者节点并确保传播。对于独占模式，释放相当于通知头部节点的正在挂起需要唤醒的接任者。
      */
     private void doReleaseShared()
     {
@@ -276,18 +278,21 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
          */
         for(;;)
         {
+            // 头节点
             Node h = head;
             if(h != null && h != tail)
             {
                 int ws = h.waitStatus;
+                // 头节点的状态是待唤醒继任者的线程
                 if(ws == Node.SIGNAL)
                 {
+                    // 尝试将头部节点的状态置为0，如果失败，则继续尝试
                     if(!compareAndSetWaitStatus(h, Node.SIGNAL, 0)) continue; // loop to recheck cases
+                    // 头部节点状态置为0之后，唤醒接任者节点线程
                     unparkSuccessor(h);
                 }
-                else if(ws == 0 && !compareAndSetWaitStatus(h, 0, Node.PROPAGATE)) continue; // loop on
-                // failed
-                // CAS
+                // 如果头部节点状态已经是0,则尝试将头部节点的状态置为传播状态
+                else if(ws == 0 && !compareAndSetWaitStatus(h, 0, Node.PROPAGATE)) continue; // loop on failed CAS
             }
             if(h == head) // loop if head changed
                 break;
@@ -379,7 +384,7 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
     /**
      * Checks and updates status for a node that failed to acquire. Returns true if thread should block.
      * This is the main signal control in all acquire loops. Requires that pred == node.prev.
-     *
+     * 检查并更新获取锁失败节点的状态。
      * @param pred node's predecessor holding status
      * @param node the node
      * @return {@code true} if thread should block
@@ -396,6 +401,7 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
         {
             /*
              * Predecessor was cancelled. Skip over predecessors and indicate retry.
+             * 前去节点已经取消，跳过并重新设置前去节点
              */
             do
             {
@@ -409,6 +415,7 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
             /*
              * waitStatus must be 0 or PROPAGATE. Indicate that we need a signal, but don't park yet. Caller
              * will need to retry to make sure it cannot acquire before parking.
+             * 将前驱节点状态设置成需唤醒状态
              */
             compareAndSetWaitStatus(pred, ws, Node.SIGNAL);
         }
@@ -443,7 +450,7 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
     
     /**
      * Acquires in exclusive uninterruptible mode for thread already in queue. Used by condition wait
-     * methods as well as acquire.
+     * methods as well as acquire.以排他不可中断模式获取已经在队列中的线程。一般会被条件wait方法和acquire方法使用。
      *
      * @param node the node
      * @param arg the acquire argument
@@ -457,14 +464,18 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
             boolean interrupted = false;
             for(;;)
             {
+                // 获取前驱节点
                 final Node p = node.predecessor();
+                // 如果前去节点是头部节点，并且尝试获取锁成功
                 if(p == head && tryAcquire(arg))
                 {
+                    // 将头部节点设置成当前节点
                     setHead(node);
                     p.next = null; // help GC
-                    failed = false;
+                    failed = fa
                     return interrupted;
                 }
+                // 获取失败则park并且校验是否中断
                 if(shouldParkAfterFailedAcquire(p, node) && parkAndCheckInterrupt()) interrupted = true;
             }
         }
@@ -785,13 +796,14 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
      * Acquires in exclusive mode, ignoring interrupts. Implemented by invoking at least once
      * {@link #tryAcquire}, returning on success. Otherwise the thread is queued, possibly repeatedly
      * blocking and unblocking, invoking {@link #tryAcquire} until success. This method can be used to
-     * implement method {@link Lock#lock}.
-     *
+     * implement method {@link Lock#lock}. 获取独占锁，忽略线程中断。
+     * 
      * @param arg the acquire argument. This value is conveyed to {@link #tryAcquire} but is otherwise
      *            uninterpreted and can represent anything you like.
      */
     public final void acquire(int arg)
     {
+        // 尝试获取，获取失败，然后加入队列，然后通过自旋获取锁，直到成功。
         if(!tryAcquire(arg) && acquireQueued(addWaiter(Node.EXCLUSIVE), arg)) selfInterrupt();
     }
     
@@ -855,20 +867,25 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
      * Acquires in shared mode, ignoring interrupts. Implemented by first invoking at least once
      * {@link #tryAcquireShared}, returning on success. Otherwise the thread is queued, possibly
      * repeatedly blocking and unblocking, invoking {@link #tryAcquireShared} until success.
-     *
+     * 获取共享锁，忽略中断。第一次至少调用一次tryAcquireShared方法，成功则返回。否则线程排队，
+     * 可能重复调用tryAcquireShared方法直到成功，tryAcquireShared方法子类实现。
+     * 
      * @param arg the acquire argument. This value is conveyed to {@link #tryAcquireShared} but is
      *            otherwise uninterpreted and can represent anything you like.
      */
     public final void acquireShared(int arg)
     {
-        if(tryAcquireShared(arg) < 0) doAcquireShared(arg);
+        if(tryAcquireShared(arg) < 0)
+        {
+            doAcquireShared(arg);
+        }
     }
     
     /**
      * Acquires in shared mode, aborting if interrupted. Implemented by first checking interrupt status,
      * then invoking at least once {@link #tryAcquireShared}, returning on success. Otherwise the thread
      * is queued, possibly repeatedly blocking and unblocking, invoking {@link #tryAcquireShared} until
-     * success or the thread is interrupted.
+     * success or the thread is interrupted. 获取共享锁，线程中断则终止。
      * 
      * @param arg the acquire argument. This value is conveyed to {@link #tryAcquireShared} but is
      *            otherwise uninterpreted and can represent anything you like.
@@ -1070,7 +1087,7 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
      *
      * @return {@code true} if there is a queued thread preceding the current thread, and {@code false}
      *         if the current thread is at the head of the queue or the queue is empty
-     * @since 1.7
+     * @since 1.7 判断是否有比当前线程还早的正在排队的先驱者
      */
     public final boolean hasQueuedPredecessors()
     {
@@ -1752,10 +1769,11 @@ public class AqsReadRemark extends AbstractOwnableSynchronizer implements java.i
         
         /**
          * Returns a collection containing those threads that may be waiting on this Condition. Implements
-         * {@link AqsReadRemark#getWaitingThreads(ConditionObject)}.
+         * {@link AqsReadRemark#getWaitingThreads(ConditionObject)}.获取正在等待中的线程集合
          *
          * @return the collection of threads
          * @throws IllegalMonitorStateException if {@link #isHeldExclusively} returns {@code false}
+         * 
          */
         protected final Collection<Thread> getWaitingThreads()
         {
